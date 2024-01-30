@@ -1,5 +1,6 @@
 import json
 
+
 class JSONFileManager:
     def __init__(self, file_path):
         self.file_path = file_path
@@ -41,4 +42,3 @@ class JSONFileManager:
             self.save_data()
         else:
             raise ValueError(f"Campo '{field}' não encontrado no registro '{key}'.")
-

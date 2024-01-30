@@ -5,10 +5,10 @@ from pathlib import Path
 
 class JsonManager:
 
-    def __init__(self, file: Path = None):
+    def __init__(self, file: str = ''):
         self.file = file
 
-    def read_json(self, file: str = None) -> dict:
+    def read_json(self, file: str = '') -> dict:
         file = self.assure_file_not_empty(file)
         file = Path(file)
 
@@ -22,14 +22,14 @@ class JsonManager:
 
             return json_file
 
-    def write_json(self, data: dict, file: str = None, mode: str = 'w'):
+    def write_json(self, data: dict, file: str = '', mode: str = 'w'):
         file = self.assure_file_not_empty(file)
         file = Path(file)
 
         with open(self.file or file, mode) as f:
             json.dump(data, f, indent=4)
 
-    def append_to_json(self, data: dict, file: str = None, mode: str = 'w'):
+    def append_to_json(self, data: dict, file: str = '', mode: str = 'w'):
         file = self.assure_file_not_empty(file)
         file = Path(file)
 

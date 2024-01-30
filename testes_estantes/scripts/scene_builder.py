@@ -13,6 +13,7 @@ import geometry_msgs.msg
 import sensor_msgs.msg
 import moveit_msgs.msg
 import rospy
+from utils.json_manager import JsonManager
 
 
 class SetUp:
@@ -57,47 +58,165 @@ class SetUp:
 
 
 class MoveGroup:
-    def __init__(self, move_group: moveit_commander.MoveGroupCommander):
+    def __init__(self,
+                 move_group: moveit_commander.MoveGroupCommander,
+                 planner: str = "RRTConnect",
+                 pose_ref_frame: str = "base_link",
+                 allow_replanning: bool = False,
+                 planning_attempts: int = 100,
+                 planning_time: float = 2.6,
+                 goal_tolerance: float = 0.025
+                 ):
+
+        self.goal_tolerance = goal_tolerance
+        self.planning_time = planning_time
+        self.planning_attempts = planning_attempts
+        self.allow_replanning = allow_replanning
+        self.pose_ref_frame = pose_ref_frame
+        self.planner = planner
         self.move_group = move_group
+        self.current_pose = self.get_current_pose()
+
+    def get_current_pose(self) -> PoseStamped:
+        return self.move_group.get_current_pose()
+
+    def plan_and_execute(self, start_state, goal_state):
+        """
+        Plan the path from start state to goal state.
+        First checks if the robot is in start state,
+        in case not, move the robot to start state
+        and then plans the trajectory to goal.
+
+        Args:
+            start_state:
+            goal_state:
+        Return:
+            ...
+        """
+        self.move_group.set_start_state_to_current_state()
+
+        self.move_group.set_pose_target(start_state)
+        # move_group.set_goal_tolerance(0.025)
+        self.use_standard_plan_config()
+        print("planner query id -- ", self.move_group.get_planner_id())
+        plan = self.move_group.plan()
+
+        if not MoveGroup.plan_is_successful(plan):
+            return
+
+        print("going to position")
+        success = self.move_group.execute(plan[1], wait=True)
+
+        if not success:
+            return
+
+        self.current_pose = self.move_group.get_current_pose()
+        print("current pose\n", self.current_pose)
+
+        self.move_group.set_start_state_to_current_state()
+
+    def use_standard_plan_config(self):
+        """
+        Use methods present in most planning scenes. It is possible
+        to change them by using the change_default_config method.
+        Or by directly changing the instance attributes of this class.
+        or  These are the standard configurations:
+
+        planner: str = "RRTConnect",
+        pose_ref_frame: str = "base_link",
+        allow_replanning: bool = False,
+        planning_attempts: int = 100,
+        planning_time: float = 2.6,
+        goal_tolerance: float = 0.025 (not allowed by default)
+
+        """
+        self.move_group.set_planner_id(self.planner)
+        self.move_group.set_pose_reference_frame(self.pose_ref_frame)
+        self.move_group.allow_replanning(self.allow_replanning)
+        self.move_group.set_num_planning_attempts(self.planning_attempts)
+        self.move_group.set_planning_time(self.planning_time)
+
+        # Parâmetro para melhorar a taxa de sucesso,
+        # porém, aumentando as chances de colisão.
+        # self.move_group.set_goal_tolerance(0.025)
+
+    def change_default_config(self,
+                              planner: str = "RRTConnect",
+                              pose_ref_frame: str = "base_link",
+                              allow_replanning: bool = False,
+                              planning_attempts: int = 100,
+                              planning_time: float = 2.6,
+                              goal_tolerance: float = 0.025,
+                              ):
+        """
+        Args:
+            planner: Planner to be used. Set it as a string
+             equal to the name in rviz graphical interface
+            pose_ref_frame: Reference frame inside PoseStamped object
+            planning_attempts: Tries till timeout
+            planning_time: Time till timeout. The timeout occurs when planning_attempts or planning time is reached
+            goal_tolerance: Helps when planning is consistently failing, but raises collision probability
+            allow_replanning:
+        """
+
+        self.planning_time = planning_time
+        self.planning_attempts = planning_attempts
+        self.allow_replanning = allow_replanning
+        self.pose_ref_frame = pose_ref_frame
+        self.planner = planner
+
+    @staticmethod
+    def plan_is_successful(plan: tuple):
+        """
+        Args:
+             plan (tuple): A tuple with the following elements:
+                (MoveItErrorCodes, trajectory_msg, planning_time, error_code)
+
+        Returns:
+            bool: True if plan successfully computed.
+        """
+
+        print("plan success", plan[0])
+        return plan[0]
 
 
 class RobotCommander:
-    def __init__(self, robot: moveit_commander.MoveGroupCommander):
-        self.robot = robot
+    def __init__(self, move_group: MoveGroup):
+        self.move_group = move_group
         self.pose_stamped: PoseStamped = PoseStamped()
 
     def get_pose(self) -> PoseStamped:
-        return self.robot.get_current_pose()
+        return self.move_group.move_group.get_current_pose()
 
-    def get_cartesian_radian(self) -> tuple:
-        quaternion = [0] * 4
-
+    def get_radian_angles(self) -> tuple:
         self.pose_stamped = self.get_pose()
 
-        quaternion[0] = self.pose_stamped.pose.orientation.x
-        quaternion[1] = self.pose_stamped.pose.orientation.y
-        quaternion[2] = self.pose_stamped.pose.orientation.z
-        quaternion[3] = self.pose_stamped.pose.orientation.w
+        orientation_angles = PoseJsonAdapter.adapt_quaternion_to_radian(self.pose_stamped)
 
-        cartesian_pose = euler_from_quaternion(quaternion)
-
-        return cartesian_pose
+        return orientation_angles
 
     def get_cartesian(self) -> list:
-        cartesian_pose = self.get_cartesian_radian()
+        orientation_angles = self.get_radian_angles()
 
         # A pose do kinova tem 3 valores de posição x, y, z, e
         # 3 valores de orientação adicionadas pelo método append
-        degrees = [0] * 3
-        degrees[0] = round(self.pose_stamped.pose.position.x, 5)
-        degrees[1] = round(self.pose_stamped.pose.position.y, 5)
-        degrees[2] = round(self.pose_stamped.pose.position.z, 5)
+        pose_kortex = [0] * 3
 
-        for radian in cartesian_pose:
-            angle = round(math.degrees(radian), 5)
-            degrees.append(angle)
+        pose_kortex[0] = round(self.pose_stamped.pose.position.x, 5)
+        pose_kortex[1] = round(self.pose_stamped.pose.position.y, 5)
+        pose_kortex[2] = round(self.pose_stamped.pose.position.z, 5)
 
-        return degrees
+        angles = PoseJsonAdapter.adapt_radian_angles_to_degrees(orientation_angles)
+
+        pose_kortex.extend(angles)
+
+        return pose_kortex
+
+    def move(self, start_state, goal_state):
+        start_state = PoseJsonAdapter.adapt_robot_to_pose_stamped(start_state)
+        goal_state = PoseJsonAdapter.adapt_robot_to_pose_stamped(goal_state)
+
+        self.move_group.plan_and_execute(start_state, goal_state)
 
 
 class Scene:
@@ -111,7 +230,7 @@ class Scene:
         self.move_group = self.setup.get_move_group()
 
         self.mg = MoveGroup(self.move_group)
-        self.robot = RobotCommander(self.move_group)
+        self.robot = RobotCommander(self.mg)
 
         self.shelf_only_3s = ShelfOnly3s()
         self.table_obj = TableObject()
@@ -171,16 +290,7 @@ class SceneObject:
         self.pose_msg = geometry_msgs.msg.PoseStamped()
 
     def set_pose(self, pose: list):
-        quaternion = quaternion_from_euler(*pose[3:], axes='rxyz')
-        # print("quaternion -- ", quaternion)
-        self.pose_msg.header.frame_id = 'base_link'
-        self.pose_msg.pose.position.x = pose[0]
-        self.pose_msg.pose.position.y = pose[1]
-        self.pose_msg.pose.position.z = pose[2]
-        self.pose_msg.pose.orientation.x = quaternion[0]
-        self.pose_msg.pose.orientation.y = quaternion[1]
-        self.pose_msg.pose.orientation.z = quaternion[2]
-        self.pose_msg.pose.orientation.w = quaternion[3]
+        self.pose_msg = PoseJsonAdapter.adapt_to_pose_stamped(pose)
 
     def change_pose(self, pose: list):
         self.set_pose(pose)
@@ -206,6 +316,77 @@ class TableObject(SceneObject):
         self.pose_msg.pose.position.x = pose[0]
         self.pose_msg.pose.position.y = pose[1]
         self.pose_msg.pose.position.z = pose[2]
+
+
+class PoseJsonAdapter:
+    """
+    Adapts the json registry to be used in MoveIt.
+    """
+
+    def __init__(self, json_path: str = ''):
+        self.json_path = json_path
+        self.json_manager: JsonManager = JsonManager(json_path)
+
+    @staticmethod
+    def adapt_to_pose_stamped(pose: list, degrees=False, axes='rxyz', frame_id='base_link') -> PoseStamped:
+        """
+        Transforms a pose list to a PoseStamped object. The MoveGroup from MoveIt
+        uses this as an argument some of its methods.
+        """
+        pose_msg = geometry_msgs.msg.PoseStamped()
+
+        if degrees:
+            pose[3] = math.radians(pose[3])
+            pose[4] = math.radians(pose[4])
+            pose[5] = math.radians(pose[5])
+            axes = 'sxyz'
+
+        quaternion = quaternion_from_euler(*pose[3:], axes=axes)
+
+        pose_msg.header.frame_id = frame_id
+        pose_msg.pose.position.x = pose[0]
+        pose_msg.pose.position.y = pose[1]
+        pose_msg.pose.position.z = pose[2]
+        pose_msg.pose.orientation.x = quaternion[0]
+        pose_msg.pose.orientation.y = quaternion[1]
+        pose_msg.pose.orientation.z = quaternion[2]
+        pose_msg.pose.orientation.w = quaternion[3]
+
+        return pose_msg
+
+    @staticmethod
+    def adapt_robot_to_pose_stamped(pose: list, degrees=False, axes='rxyz', frame_id='world') -> PoseStamped:
+        """
+        Transforms a pose list to a PoseStamped object. The MoveGroup from MoveIt
+        uses this as an argument some of its methods.
+        """
+
+        pose_msg = PoseJsonAdapter.adapt_to_pose_stamped(pose, degrees=True, axes='sxyz', frame_id='world')
+
+        return pose_msg
+
+    @staticmethod
+    def adapt_quaternion_to_radian(pose: PoseStamped) -> tuple:
+        quaternion = [0] * 4
+
+        quaternion[0] = pose.pose.orientation.x
+        quaternion[1] = pose.pose.orientation.y
+        quaternion[2] = pose.pose.orientation.z
+        quaternion[3] = pose.pose.orientation.w
+
+        radian_angles = euler_from_quaternion(quaternion)
+
+        return radian_angles
+
+    @staticmethod
+    def adapt_radian_angles_to_degrees(radian_angles: tuple) -> list:
+        angles = []
+
+        for angle in radian_angles:
+            degrees_angle = round(math.degrees(angle), 5)
+            angles.append(degrees_angle)
+
+        return angles
 
 
 class PathPlanner:
